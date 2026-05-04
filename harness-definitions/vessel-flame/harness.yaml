@@ -1,0 +1,230 @@
+hdl: "0.1.0"
+extends: ../general.harness.yaml
+
+pair:
+  name: vessel-flame
+  archetype: structure-energy
+
+  agents:
+    vessel:
+      soul: ./vessel_soul.md
+      model: haiku
+      role: receptive
+      speaks_first: true
+
+    flame:
+      soul: ./flame_soul.md
+      model: haiku
+      role: focused
+      speaks_first: false
+
+phases:
+  initial: design_dialogue
+
+  states:
+    design_dialogue:
+      description: Collaborative exploration of the problem and approach
+      agent_lead: vessel
+      max_rounds: 6
+      tools:
+        vessel: [read, search, grep, conversation, get_current_state, take_action]
+        flame: [read, search, grep, conversation, get_current_state, take_action]
+      handoff_mode: full_context
+      phase_signal: generative
+      transitions:
+        - to: implementation
+          trigger: explicit
+          guard: both_agree
+        - to: escalation
+          trigger: automatic
+          guard: round_limit
+
+    implementation:
+      description: Vessel builds the solution
+      agent_lead: vessel
+      max_rounds: 1
+      tools:
+        vessel: [read, write, edit, search, grep, bash, test, get_current_state, take_action]
+        flame: []
+      handoff_mode: full_context
+      phase_signal: generative
+      transitions:
+        - to: review
+          trigger: explicit
+          guard: lead_signals
+          requires:
+            - code_submission
+            - self_assessment
+
+    review:
+      description: Flame evaluates the implementation with fresh context
+      agent_lead: flame
+      max_rounds: 3
+      tools:
+        vessel: []
+        flame: [read, search, grep, get_current_state, take_action]
+      handoff_mode: artifact_only
+      phase_signal: evaluative
+      artifact_input:
+        - task_spec
+        - code_submission
+        - self_assessment
+      transitions:
+        - to: complete
+          trigger: explicit
+          guard: lead_signals
+        - to: implementation
+          trigger: explicit
+          guard: lead_signals
+          state_lock:
+            approved_sections: read_only
+        - to: escalation
+          trigger: automatic
+          guard: round_limit
+
+    verification:
+      description: Running tests and validating the solution
+      agent_lead: both
+      max_rounds: 2
+      tools:
+        vessel: [read, write, edit, bash, test, get_current_state, take_action]
+        flame: [read, bash, test, get_current_state, take_action]
+      handoff_mode: full_context
+      phase_signal: evaluative
+      transitions:
+        - to: complete
+          trigger: automatic
+          guard: tests_pass
+        - to: implementation
+          trigger: automatic
+          guard: tests_fail
+
+    escalation:
+      description: Human intervention needed
+      agent_lead: none
+      action: pause_for_human
+
+    complete:
+      description: Task successfully finished
+      terminal: true
+
+turns:
+  default_protocol: sequential
+
+  protocols:
+    sequential:
+      order: [vessel, flame]
+      actions:
+        vessel: [sense, frame, propose, submit, hold_open]
+        flame: [investigate, evaluate, challenge, approve, request_revision]
+
+  phase_overrides:
+    design_dialogue:
+      protocol: sequential
+    implementation:
+      protocol: sequential
+      order: [vessel]
+    review:
+      protocol: sequential
+      order: [flame]
+    verification:
+      protocol: alternating
+
+artifacts:
+  types:
+    sensing:
+      producer: vessel
+      schema:
+        concern: string
+        location: string
+        confidence: low | medium | high
+      route_to: flame
+
+    investigation:
+      producer: flame
+      schema:
+        finding: string
+        location: string
+        severity: critical | significant | minor
+        scenario: string
+        impact: string
+      route_to: vessel
+
+    self_assessment:
+      producer: vessel
+      schema:
+        weaknesses:
+          type: array
+          min_items: 3
+          items:
+            weakness: string
+            location: string
+            risk: string
+      route_to: flame
+
+    review_verdict:
+      producer: flame
+      schema:
+        verdict: lgtm | issues_found | needs_redesign
+        findings:
+          type: array
+          items:
+            finding: string
+            location: string
+            severity: critical | significant | minor
+            scenario: string
+            impact: string
+        self_assessment_rating: accurate | partially_accurate | missed_key_issues
+      route_to: vessel
+
+    code_submission:
+      producer: vessel
+      content_type: file_references
+      route_to: [flame, shared_workspace]
+
+context:
+  soul_protection:
+    reinjection:
+      strategy: periodic
+      interval_turns: 20
+      what: constraints_only
+
+guardrails:
+  state_locking:
+    enabled: true
+    scope: function_level
+    unlock_requires: explicit_escalation
+
+  monitors:
+    consumption:
+      description: Flame accumulating directive pressure over Vessel
+      metric: turn_word_count_ratio
+      threshold: 3.0
+      action: inject_balance_prompt
+
+    convergence:
+      description: Vessel merging with Flame's perspective too easily
+      metric: semantic_distance
+      threshold: 0.15
+      action: inject_disruption
+
+    calibration:
+      description: Flame review find rate tracking
+      metric: find_rate
+      expected_range: [0.30, 0.90]
+      action: log_and_alert
+
+  behavioral_contracts:
+    vessel:
+      - must_include_self_assessment_on_submission
+      - must_state_intent_before_building
+    flame:
+      - must_investigate_before_pronouncing
+      - must_use_structured_finding_format
+      - must_rate_self_assessment_accuracy
+
+observability:
+  quality_metrics:
+    reviewer_acceptance_rate: true
+    rounds_to_resolution: true
+    self_assessment_accuracy: true

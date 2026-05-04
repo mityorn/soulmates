@@ -1,0 +1,238 @@
+hdl: "0.1.0"
+extends: ../general.harness.yaml
+
+pair:
+  name: unified
+  archetype: creator-embodiment
+
+  agents:
+    weaver:
+      soul: ./weaver_soul.md
+      model: haiku
+      role: receptive
+      speaks_first: true
+
+    smith:
+      soul: ./smith_soul.md
+      model: haiku
+      role: focused
+      speaks_first: false
+
+phases:
+  initial: design
+
+  states:
+    design:
+      description: Collaborative design of the approach
+      agent_lead: weaver
+      max_rounds: 4
+      tools:
+        weaver: [read, search, grep, conversation, get_current_state, take_action]
+        smith: [read, search, grep, conversation, get_current_state, take_action]
+      handoff_mode: full_context
+      phase_signal: generative
+      transitions:
+        - to: build
+          trigger: explicit
+          guard: both_agree
+
+    build:
+      description: Weaver builds the solution
+      agent_lead: weaver
+      max_rounds: 1
+      tools:
+        weaver: [read, write, edit, search, grep, bash, test, get_current_state, take_action]
+        smith: []
+      handoff_mode: full_context
+      phase_signal: generative
+      transitions:
+        - to: self_assess
+          trigger: explicit
+          guard: lead_signals
+          requires:
+            - code_submission
+
+    self_assess:
+      description: Weaver identifies weaknesses in own work
+      agent_lead: weaver
+      max_rounds: 1
+      tools:
+        weaver: [read, search, grep, get_current_state, take_action]
+        smith: []
+      handoff_mode: full_context
+      transitions:
+        - to: review
+          trigger: explicit
+          guard: lead_signals
+          requires:
+            - self_assessment
+
+    review:
+      description: Smith evaluates with 4-layer protocol
+      agent_lead: smith
+      max_rounds: 3
+      tools:
+        weaver: []
+        smith: [read, search, grep, bash, test, get_current_state, take_action]
+      handoff_mode: artifact_only
+      phase_signal: evaluative
+      artifact_input:
+        - task_spec
+        - code_submission
+        - self_assessment
+      transitions:
+        - to: complete
+          trigger: explicit
+          guard: lead_signals
+        - to: fix
+          trigger: explicit
+          guard: lead_signals
+          state_lock:
+            approved_sections: read_only
+        - to: escalation
+          trigger: automatic
+          guard: round_limit
+
+    fix:
+      description: Weaver addresses Smith's findings
+      agent_lead: weaver
+      max_rounds: 1
+      tools:
+        weaver: [read, write, edit, search, grep, bash, test, get_current_state, take_action]
+        smith: []
+      handoff_mode: full_context
+      phase_signal: generative
+      transitions:
+        - to: self_assess
+          trigger: explicit
+          guard: lead_signals
+          requires:
+            - code_submission
+
+    escalation:
+      description: Human intervention needed
+      agent_lead: none
+      action: pause_for_human
+
+    complete:
+      description: Task successfully finished
+      terminal: true
+
+turns:
+  default_protocol: sequential
+
+  protocols:
+    sequential:
+      order: [weaver, smith]
+      actions:
+        weaver: [propose, build, submit, self_assess, fix, hold_open]
+        smith: [audit_self_assessment, attack_correctness, evaluate_coherence, pre_mortem, approve, request_revision]
+
+  phase_overrides:
+    design:
+      protocol: alternating
+    build:
+      protocol: sequential
+      order: [weaver]
+    self_assess:
+      protocol: sequential
+      order: [weaver]
+    review:
+      protocol: sequential
+      order: [smith]
+    fix:
+      protocol: sequential
+      order: [weaver]
+
+artifacts:
+  types:
+    self_assessment:
+      producer: weaver
+      schema:
+        weaknesses:
+          type: array
+          min_items: 3
+          items:
+            weakness: string
+            location: string
+            risk: string
+      route_to: smith
+
+    review_verdict:
+      producer: smith
+      schema:
+        layer_1_self_assessment_audit:
+          accuracy: accurate | partially_accurate | missed_key_issues
+          missed_weaknesses: array
+        layer_2_correctness_attack:
+          findings:
+            type: array
+            items:
+              finding: string
+              location: string
+              severity: critical | significant | minor
+              scenario: string
+              impact: string
+        layer_3_design_coherence:
+          assessment: string
+          concerns: array
+        layer_4_pre_mortem:
+          failure_scenarios: array
+        verdict: lgtm | issues_found | needs_redesign
+      route_to: weaver
+
+    code_submission:
+      producer: weaver
+      content_type: file_references
+      route_to: [smith, shared_workspace]
+
+guardrails:
+  circuit_breakers:
+    loop_detection:
+      method: output_similarity
+      similarity_threshold: 0.85
+      lookback: 3
+      action: inject_disruption
+
+  state_locking:
+    enabled: true
+    scope: function_level
+    unlock_requires: explicit_escalation
+
+  monitors:
+    calibration:
+      description: Smith's find rate tracking across submissions
+      metric: find_rate
+      expected_range: [0.30, 0.70]
+      action: log_and_alert
+
+    self_assessment_gaming:
+      description: Weaver under-reporting weaknesses
+      metric: self_assessment_miss_rate
+      threshold: 0.60
+      action: inject_honesty_prompt
+
+    manufactured_findings:
+      description: Smith finding non-issues to fill space
+      metric: finding_severity_distribution
+      action: log_and_alert
+
+  behavioral_contracts:
+    weaver:
+      - must_include_self_assessment_with_min_3_weaknesses
+      - must_not_submit_without_self_assessment_phase
+    smith:
+      - must_complete_all_4_review_layers
+      - must_use_structured_finding_format
+      - must_rate_self_assessment_accuracy
+      - must_investigate_before_pronouncing
+
+observability:
+  quality_metrics:
+    reviewer_acceptance_rate: true
+    rounds_to_resolution: true
+    self_assessment_accuracy: true
+    four_layer_completion_rate: true
+
+  interaction_quality:
+    calibration_trend: true

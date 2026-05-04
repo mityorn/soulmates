@@ -1,0 +1,220 @@
+hdl: "0.1.0"
+extends: ../general.harness.yaml
+
+pair:
+  name: adversarial-symbiosis
+  archetype: build-break
+
+  agents:
+    maker:
+      soul: ./maker_soul.md
+      model: haiku
+      role: receptive
+      speaks_first: true
+
+    breaker:
+      soul: ./breaker_soul.md
+      model: haiku
+      role: focused
+      speaks_first: false
+
+phases:
+  initial: plan
+
+  states:
+    plan:
+      description: Maker plans the approach before building
+      agent_lead: maker
+      max_rounds: 2
+      tools:
+        maker: [read, search, grep, conversation, get_current_state, take_action]
+        breaker: []
+      handoff_mode: full_context
+      phase_signal: generative
+      transitions:
+        - to: build
+          trigger: explicit
+          guard: lead_signals
+
+    build:
+      description: Maker implements the solution
+      agent_lead: maker
+      max_rounds: 1
+      tools:
+        maker: [read, write, edit, search, grep, bash, test, get_current_state, take_action]
+        breaker: []
+      handoff_mode: full_context
+      phase_signal: generative
+      transitions:
+        - to: break_review
+          trigger: explicit
+          guard: lead_signals
+          requires:
+            - code_submission
+            - self_assessment
+
+    break_review:
+      description: Breaker evaluates with fresh context — Context Firewall active
+      agent_lead: breaker
+      max_rounds: 2
+      tools:
+        maker: []
+        breaker: [read, search, grep, bash, test, get_current_state, take_action]
+      handoff_mode: artifact_only
+      phase_signal: evaluative
+      artifact_input:
+        - task_spec
+        - code_submission
+        - self_assessment
+      transitions:
+        - to: complete
+          trigger: explicit
+          guard: lead_signals
+        - to: fix
+          trigger: explicit
+          guard: lead_signals
+          state_lock:
+            approved_sections: read_only
+          max_cycles: 3
+        - to: escalation
+          trigger: automatic
+          guard: round_limit
+
+    fix:
+      description: Maker addresses Breaker's findings
+      agent_lead: maker
+      max_rounds: 1
+      tools:
+        maker: [read, write, edit, search, grep, bash, test, get_current_state, take_action]
+        breaker: []
+      handoff_mode: full_context
+      phase_signal: generative
+      transitions:
+        - to: break_review
+          trigger: explicit
+          guard: lead_signals
+          requires:
+            - code_submission
+            - self_assessment
+        - to: escalation
+          trigger: automatic
+          guard: cycle_limit_reached
+
+    escalation:
+      description: Human intervention needed — exceeded 3 build-break cycles
+      agent_lead: none
+      action: pause_for_human
+
+    complete:
+      description: Breaker found no issues or all issues resolved
+      terminal: true
+
+turns:
+  default_protocol: sequential
+
+  protocols:
+    sequential:
+      order: [maker, breaker]
+      actions:
+        maker: [plan, build, submit, fix, self_assess]
+        breaker: [evaluate, challenge, find_issue, approve, request_revision]
+
+  phase_overrides:
+    plan:
+      protocol: sequential
+      order: [maker]
+    build:
+      protocol: sequential
+      order: [maker]
+    break_review:
+      protocol: sequential
+      order: [breaker]
+    fix:
+      protocol: sequential
+      order: [maker]
+
+artifacts:
+  types:
+    self_assessment:
+      producer: maker
+      schema:
+        weaknesses:
+          type: array
+          min_items: 3
+          items:
+            weakness: string
+            location: string
+            risk: string
+      route_to: breaker
+
+    break_verdict:
+      producer: breaker
+      schema:
+        verdict: no_issues_found | issues_found | needs_redesign
+        findings:
+          type: array
+          items:
+            finding: string
+            location: string
+            severity: critical | significant | minor
+            scenario: string
+            impact: string
+        self_assessment_rating: accurate | partially_accurate | missed_key_issues
+      route_to: maker
+
+    code_submission:
+      producer: maker
+      content_type: file_references
+      route_to: [breaker, shared_workspace]
+
+guardrails:
+  circuit_breakers:
+    cycle_limit:
+      max_build_break_cycles: 3
+      action: escalation
+
+  state_locking:
+    enabled: true
+    scope: function_level
+    unlock_requires: explicit_escalation
+
+  monitors:
+    manufactured_findings:
+      description: Breaker finding non-issues to perform rigor
+      metric: find_rate
+      expected_range: [0.30, 0.90]
+      action: log_and_alert
+
+    rubber_stamping:
+      description: Maker accepting all findings without engagement
+      metric: finding_acceptance_rate
+      threshold: 0.95
+      action: inject_engagement_prompt
+
+    isolation_integrity:
+      description: Breaker seeing context beyond artifact_input
+      metric: context_firewall_violations
+      threshold: 0
+      action: terminate_and_alert
+
+  behavioral_contracts:
+    maker:
+      - must_include_self_assessment_with_min_3_weaknesses
+      - must_release_attachment_to_authorship
+      - must_engage_with_findings_specifically
+    breaker:
+      - must_use_structured_finding_format
+      - must_investigate_before_pronouncing
+      - must_rate_self_assessment_accuracy
+      - must_not_access_conversation_history_in_review
+
+observability:
+  quality_metrics:
+    reviewer_acceptance_rate: true
+    rounds_to_resolution: true
+    self_assessment_accuracy: true
+    cycles_to_completion: true
+
+  interaction_quality:
+    finding_severity_distribution: true
+    state_lock_frequency: true

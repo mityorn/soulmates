@@ -1,0 +1,272 @@
+hdl: "0.1.0"
+extends: ../general.harness.yaml
+
+pair:
+  name: adaptive-harness
+  archetype: structure-energy
+
+  agents:
+    alpha:
+      soul: ./alpha_soul.md
+      model: haiku
+      role: receptive
+      speaks_first: true
+
+    beta:
+      soul: ./beta_soul.md
+      model: haiku
+      role: focused
+      speaks_first: false
+
+phases:
+  initial: mode_selection
+
+  states:
+    mode_selection:
+      description: Both agents agree on which collaboration mode fits the task
+      agent_lead: both
+      max_rounds: 2
+      tools:
+        alpha: [read, search, grep, conversation, get_current_state, take_action]
+        beta: [read, search, grep, conversation, get_current_state, take_action]
+      handoff_mode: full_context
+      transitions:
+        - to: mode_coniunctio
+          trigger: explicit
+          guard: both_agree
+        - to: mode_dialectic
+          trigger: explicit
+          guard: both_agree
+        - to: mode_adversarial
+          trigger: explicit
+          guard: both_agree
+        - to: mode_coniunctio
+          trigger: automatic
+          guard: round_limit
+
+    # --- Coniunctio Mode ---
+    mode_coniunctio:
+      description: Alpha frames, Beta executes within frame
+      agent_lead: alpha
+      max_rounds: 8
+      mode_transition_cooldown: 3
+      tools:
+        alpha: [read, search, grep, conversation, get_current_state, take_action]
+        beta: [read, write, edit, search, grep, bash, test, conversation, get_current_state, take_action]
+      handoff_mode: full_context
+      phase_signal: generative
+      sub_phases:
+        - frame
+        - execute
+        - evaluate_significance
+        - ground
+      transitions:
+        - to: complete
+          trigger: explicit
+          guard: both_agree
+        - to: mode_selection
+          trigger: explicit
+          guard: both_agree
+          min_rounds_in_mode: 3
+        - to: escalation
+          trigger: automatic
+          guard: round_limit
+
+    # --- Dialectic Mode ---
+    mode_dialectic:
+      description: Symmetric exploration and convergence
+      agent_lead: both
+      max_rounds: 8
+      mode_transition_cooldown: 3
+      tools:
+        alpha: [read, write, edit, search, grep, bash, test, conversation, get_current_state, take_action]
+        beta: [read, write, edit, search, grep, bash, test, conversation, get_current_state, take_action]
+      handoff_mode: full_context
+      phase_signal: generative
+      sub_phases:
+        - explore
+        - converge
+        - implement
+        - validate
+      transitions:
+        - to: complete
+          trigger: explicit
+          guard: both_agree
+        - to: mode_selection
+          trigger: explicit
+          guard: both_agree
+          min_rounds_in_mode: 3
+        - to: escalation
+          trigger: automatic
+          guard: round_limit
+
+    # --- Adversarial Mode ---
+    mode_adversarial:
+      description: Alpha builds with self-assessment, Beta reviews with fresh context
+      agent_lead: alpha
+      max_rounds: 8
+      mode_transition_cooldown: 3
+      tools:
+        alpha: [read, write, edit, search, grep, bash, test, get_current_state, take_action]
+        beta: [read, search, grep, bash, test, get_current_state, take_action]
+      phase_signal: evaluative
+      sub_phases:
+        - build
+        - self_assess
+        - break_review
+        - fix
+      handoff_modes_by_sub_phase:
+        build: full_context
+        self_assess: full_context
+        break_review: artifact_only
+        fix: full_context
+      artifact_input_for_break_review:
+        - task_spec
+        - code_submission
+        - self_assessment
+      transitions:
+        - to: complete
+          trigger: explicit
+          guard: lead_signals
+        - to: mode_selection
+          trigger: explicit
+          guard: both_agree
+          min_rounds_in_mode: 3
+        - to: escalation
+          trigger: automatic
+          guard: round_limit
+
+    escalation:
+      description: Human intervention needed
+      agent_lead: none
+      action: pause_for_human
+
+    complete:
+      description: Task successfully finished
+      terminal: true
+
+turns:
+  default_protocol: alternating
+
+  protocols:
+    alternating:
+      balance_threshold: 0.65
+      actions:
+        both: [propose, challenge, build_on, synthesize, converge, transition_mode]
+
+    sequential:
+      actions:
+        alpha: [frame, sense, propose, submit, self_assess, build]
+        beta: [execute, ground, evaluate, challenge, approve, request_revision]
+
+  phase_overrides:
+    mode_selection:
+      protocol: alternating
+    mode_coniunctio:
+      protocol: sequential
+      order: [alpha, beta]
+    mode_dialectic:
+      protocol: alternating
+    mode_adversarial:
+      protocol: sequential
+      order: [alpha, beta]
+
+artifacts:
+  types:
+    mode_declaration:
+      producer: both
+      schema:
+        mode: coniunctio | dialectic | adversarial
+        reason: string
+        both_agreed: boolean
+      route_to: shared_workspace
+
+    frame_artifact:
+      producer: alpha
+      schema:
+        purpose: string
+        significance: string
+        constraints: array
+      route_to: beta
+
+    self_assessment:
+      producer: alpha
+      schema:
+        weaknesses:
+          type: array
+          min_items: 3
+          items:
+            weakness: string
+            location: string
+            risk: string
+      route_to: beta
+
+    code_submission:
+      producer: alpha
+      content_type: file_references
+      route_to: [beta, shared_workspace]
+
+    review_verdict:
+      producer: beta
+      schema:
+        verdict: lgtm | issues_found | needs_redesign
+        findings: array
+        self_assessment_rating: accurate | partially_accurate | missed_key_issues
+      route_to: alpha
+
+guardrails:
+  circuit_breakers:
+    mode_oscillation:
+      max_mode_switches: 3
+      cooldown_turns: 3
+      action: escalation
+
+  state_locking:
+    enabled: true
+    scope: function_level
+    unlock_requires: new_phase
+
+  monitors:
+    mode_avoidance:
+      description: Switching modes to avoid hard work in current mode
+      metric: rounds_before_mode_switch
+      threshold: 3
+      action: inject_commitment_prompt
+
+    mode_mismatch:
+      description: Agents operating in different modes
+      metric: mode_agreement
+      threshold: 1.0
+      action: force_mode_sync
+
+    alpha_domination:
+      description: Alpha consuming in all modes regardless of structure
+      metric: turn_word_count_ratio
+      threshold: 3.0
+      action: inject_balance_prompt
+
+    adversarial_isolation:
+      description: Conversation history leaking into Beta's review in adversarial mode
+      metric: context_firewall_violations
+      threshold: 0
+      action: terminate_and_alert
+
+  behavioral_contracts:
+    alpha:
+      - must_declare_mode_with_reason
+      - must_include_self_assessment_in_adversarial_mode
+      - must_produce_frame_in_coniunctio_mode
+    beta:
+      - must_acknowledge_mode_declaration
+      - must_use_fresh_context_in_adversarial_review
+      - must_execute_within_frame_in_coniunctio_mode
+
+observability:
+  quality_metrics:
+    mode_distribution: true
+    rounds_to_resolution: true
+    per_mode_success_rate: true
+
+  interaction_quality:
+    mode_switch_frequency: true
+    mode_fit_accuracy: true

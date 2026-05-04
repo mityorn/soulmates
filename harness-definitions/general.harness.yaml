@@ -1,0 +1,159 @@
+hdl: "0.1.0"
+
+# General Harness Defaults
+# All per-pair harness files inherit from this file via `extends`.
+# Only pair-specific overrides need to be specified in per-pair files.
+
+pair:
+  archetype: null
+
+phases:
+  initial: collaboration
+
+  states:
+    collaboration:
+      description: General-purpose collaborative work phase
+      agent_lead: both
+      max_rounds: 10
+      tools:
+        both: [read, write, edit, search, grep, bash, test, conversation, get_current_state, take_action]
+      handoff_mode: full_context
+      transitions:
+        - to: complete
+          trigger: explicit
+          guard: both_agree
+        - to: escalation
+          trigger: automatic
+          guard: round_limit
+
+    escalation:
+      description: Human intervention needed
+      agent_lead: none
+      action: pause_for_human
+
+    complete:
+      description: Task successfully finished
+      terminal: true
+
+turns:
+  default_protocol: alternating
+
+  protocols:
+    sequential:
+      description: Agent A speaks, then Agent B responds
+      actions:
+        initiator: [sense, frame, propose, submit, hold_open]
+        responder: [investigate, evaluate, challenge, approve, request_revision]
+
+    alternating:
+      description: Agents alternate with no fixed leader
+      balance_threshold: 0.65
+      actions:
+        both: [propose, challenge, build_on, synthesize, converge]
+
+    parallel:
+      description: Both agents work independently then sync
+      isolation: true
+      sync_point: both_complete
+      actions:
+        both: [generate, document_reasoning]
+
+artifacts:
+  workspace:
+    type: filesystem
+    path: ./workspace
+    per_agent_dirs: false
+    shared_files:
+      - "*.md"
+      - "src/**"
+      - "tests/**"
+
+context:
+  soul_protection:
+    compactable: false
+    position: primacy
+    reinjection:
+      strategy: periodic
+      interval_turns: 20
+      what: constraints_only
+
+  compaction:
+    trigger: token_threshold
+    threshold: 0.75
+    preserve:
+      - reasoning_anchors
+      - persistent_concerns
+      - test_results
+      - phase_transitions
+    summarize: everything_else
+
+  handoff:
+    full_context:
+      narrative_recasting: true
+      attribution: agent_name
+    artifact_only:
+      fresh_soul: true
+      include: [task_spec, artifacts]
+      exclude: [conversation_history, partner_reasoning]
+    isolated:
+      separate_workspaces: true
+      no_shared_context: true
+
+guardrails:
+  circuit_breakers:
+    token_budget:
+      max_tokens_per_round: 50000
+      max_tokens_per_task: 500000
+      action: escalation
+
+    loop_detection:
+      method: output_similarity
+      similarity_threshold: 0.85
+      lookback: 3
+      action: inject_disruption
+
+    progress_stall:
+      max_rounds_without_progress: 4
+      action: escalation
+
+  monitors:
+    consumption:
+      description: One agent dominating the interaction
+      metric: turn_word_count_ratio
+      threshold: 3.0
+      action: inject_balance_prompt
+
+    convergence:
+      description: Agents producing identical outputs
+      metric: semantic_distance
+      threshold: 0.15
+      action: inject_disruption
+
+  state_locking:
+    enabled: false
+    scope: function_level
+    unlock_requires: explicit_escalation
+
+  behavioral_contracts: {}
+
+observability:
+  token_tracking:
+    granularity: per_agent_per_phase
+    budget_alerts: true
+
+  quality_metrics:
+    rounds_to_resolution: true
+
+  drift_signals:
+    re_statement_detection: true
+    goal_wording_changes: true
+    declining_specificity: true
+
+  interaction_quality:
+    friction_rate: true
+    convergence_speed: true
+
+  logging:
+    format: jsonl
+    include_artifacts: references
+    retention: per_task

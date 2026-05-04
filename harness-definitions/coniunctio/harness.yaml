@@ -1,0 +1,199 @@
+hdl: "0.1.0"
+extends: ../general.harness.yaml
+
+pair:
+  name: coniunctio
+  archetype: intuitive-rigorous
+
+  agents:
+    eros:
+      soul: ./eros_soul.md
+      model: haiku
+      role: receptive
+      speaks_first: true
+
+    logos:
+      soul: ./logos_soul.md
+      model: haiku
+      role: focused
+      speaks_first: false
+
+phases:
+  initial: framing
+
+  states:
+    framing:
+      description: Eros frames the task in terms of meaning and significance
+      agent_lead: eros
+      max_rounds: 3
+      tools:
+        eros: [read, search, grep, conversation, get_current_state, take_action]
+        logos: [read, conversation, get_current_state, take_action]
+      handoff_mode: full_context
+      phase_signal: generative
+      transitions:
+        - to: execution
+          trigger: explicit
+          guard: lead_signals
+          requires:
+            - frame_artifact
+
+    execution:
+      description: Logos executes within the frame Eros established
+      agent_lead: logos
+      max_rounds: 4
+      tools:
+        eros: []
+        logos: [read, write, edit, search, grep, bash, test, get_current_state, take_action]
+      handoff_mode: artifact_only
+      artifact_input:
+        - task_spec
+        - frame_artifact
+      phase_signal: generative
+      transitions:
+        - to: significance_eval
+          trigger: explicit
+          guard: lead_signals
+          requires:
+            - code_submission
+        - to: framing
+          trigger: explicit
+          guard: lead_signals
+        - to: escalation
+          trigger: automatic
+          guard: round_limit
+
+    significance_eval:
+      description: Eros evaluates for meaning and significance — not correctness
+      agent_lead: eros
+      max_rounds: 2
+      tools:
+        eros: [read, search, grep, conversation, get_current_state, take_action]
+        logos: [conversation, get_current_state, take_action]
+      handoff_mode: full_context
+      phase_signal: evaluative
+      transitions:
+        - to: grounding
+          trigger: explicit
+          guard: lead_signals
+          requires:
+            - significance_assessment
+        - to: framing
+          trigger: explicit
+          guard: lead_signals
+
+    grounding:
+      description: Logos grounds the significance evaluation in concrete terms
+      agent_lead: logos
+      max_rounds: 2
+      tools:
+        eros: [read, conversation, get_current_state, take_action]
+        logos: [read, write, edit, bash, test, get_current_state, take_action]
+      handoff_mode: full_context
+      phase_signal: evaluative
+      transitions:
+        - to: complete
+          trigger: explicit
+          guard: both_agree
+        - to: framing
+          trigger: explicit
+          guard: lead_signals
+        - to: escalation
+          trigger: automatic
+          guard: round_limit
+
+    escalation:
+      description: Human intervention needed
+      agent_lead: none
+      action: pause_for_human
+
+    complete:
+      description: Task successfully finished
+      terminal: true
+
+turns:
+  default_protocol: sequential
+
+  protocols:
+    sequential:
+      order: [eros, logos]
+      actions:
+        eros: [frame, sense_significance, evaluate_meaning, hold_open, propose]
+        logos: [execute, ground, formalize, challenge_abstraction, converge]
+
+  phase_overrides:
+    framing:
+      protocol: sequential
+      order: [eros]
+    execution:
+      protocol: sequential
+      order: [logos]
+    significance_eval:
+      protocol: sequential
+      order: [eros, logos]
+    grounding:
+      protocol: sequential
+      order: [logos, eros]
+
+artifacts:
+  types:
+    frame_artifact:
+      producer: eros
+      schema:
+        purpose: string
+        significance: string
+        constraints: array
+        what_matters: string
+      route_to: [logos, shared_workspace]
+
+    significance_assessment:
+      producer: eros
+      schema:
+        alignment_with_frame: high | partial | misaligned
+        what_was_preserved: string
+        what_was_lost: string
+        recommendation: proceed | adjust | reframe
+      route_to: logos
+
+    code_submission:
+      producer: logos
+      content_type: file_references
+      route_to: [eros, shared_workspace]
+
+guardrails:
+  monitors:
+    abstraction_drift:
+      description: Eros frames becoming increasingly vague
+      metric: declining_specificity
+      threshold: 3
+      action: inject_grounding_prompt
+
+    frame_bypass:
+      description: Logos ignoring the frame and executing on own interpretation
+      metric: frame_reference_rate
+      expected_range: [0.50, 1.00]
+      action: inject_frame_reminder
+
+    cycle_collapse:
+      description: 4-step cycle collapsing to 2 steps
+      metric: phases_visited_per_task
+      expected_range: [3, 5]
+      action: log_and_alert
+
+  behavioral_contracts:
+    eros:
+      - must_produce_frame_artifact_before_execution
+      - must_evaluate_significance_not_correctness
+    logos:
+      - must_reference_frame_in_execution
+      - must_not_skip_framing_phase
+      - must_ground_evaluations_concretely
+
+observability:
+  quality_metrics:
+    frame_adherence_rate: true
+    significance_eval_outcomes: true
+    rounds_to_resolution: true
+
+  interaction_quality:
+    cycle_completion_rate: true

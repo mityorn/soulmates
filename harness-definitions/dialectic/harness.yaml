@@ -1,0 +1,186 @@
+hdl: "0.1.0"
+extends: ../general.harness.yaml
+
+pair:
+  name: dialectic
+  archetype: visionary-engineer
+
+  agents:
+    visionary:
+      soul: ./visionary_soul.md
+      model: haiku
+      role: symmetric
+      speaks_first: true
+
+    pragmatist:
+      soul: ./pragmatist_soul.md
+      model: haiku
+      role: symmetric
+      speaks_first: false
+
+phases:
+  initial: exploration
+
+  states:
+    exploration:
+      description: Divergent exploration of approaches and possibilities
+      agent_lead: both
+      max_rounds: 5
+      min_rounds: 2
+      tools:
+        visionary: [read, search, grep, conversation, get_current_state, take_action]
+        pragmatist: [read, search, grep, conversation, get_current_state, take_action]
+      handoff_mode: full_context
+      phase_signal: generative
+      transitions:
+        - to: convergence
+          trigger: explicit
+          guard: both_agree
+          min_rounds_required: 2
+        - to: convergence
+          trigger: automatic
+          guard: round_limit
+
+    convergence:
+      description: Narrowing to a shared approach through honest negotiation
+      agent_lead: both
+      max_rounds: 4
+      tools:
+        visionary: [read, search, grep, conversation, get_current_state, take_action]
+        pragmatist: [read, search, grep, conversation, get_current_state, take_action]
+      handoff_mode: full_context
+      phase_signal: evaluative
+      transitions:
+        - to: implementation
+          trigger: explicit
+          guard: both_agree
+          requires:
+            - convergence_decision
+        - to: exploration
+          trigger: explicit
+          guard: both_agree
+        - to: escalation
+          trigger: automatic
+          guard: round_limit
+
+    implementation:
+      description: Building the agreed-upon approach together
+      agent_lead: both
+      max_rounds: 6
+      tools:
+        visionary: [read, write, edit, search, grep, bash, test, get_current_state, take_action]
+        pragmatist: [read, write, edit, search, grep, bash, test, get_current_state, take_action]
+      handoff_mode: full_context
+      phase_signal: generative
+      transitions:
+        - to: validation
+          trigger: explicit
+          guard: both_agree
+          requires:
+            - code_submission
+        - to: escalation
+          trigger: automatic
+          guard: round_limit
+
+    validation:
+      description: Verifying the implementation meets both agents' criteria
+      agent_lead: both
+      max_rounds: 3
+      tools:
+        visionary: [read, search, grep, bash, test, get_current_state, take_action]
+        pragmatist: [read, search, grep, bash, test, get_current_state, take_action]
+      handoff_mode: full_context
+      phase_signal: evaluative
+      transitions:
+        - to: complete
+          trigger: explicit
+          guard: both_agree
+        - to: implementation
+          trigger: explicit
+          guard: both_agree
+        - to: exploration
+          trigger: explicit
+          guard: both_agree
+
+    escalation:
+      description: Human intervention needed
+      agent_lead: none
+      action: pause_for_human
+
+    complete:
+      description: Task successfully finished
+      terminal: true
+
+turns:
+  default_protocol: alternating
+
+  protocols:
+    alternating:
+      balance_threshold: 0.65
+      actions:
+        both: [propose, challenge, build_on, synthesize, converge, reopen, force_decision]
+
+  phase_overrides:
+    exploration:
+      protocol: alternating
+    convergence:
+      protocol: alternating
+    implementation:
+      protocol: alternating
+    validation:
+      protocol: alternating
+
+artifacts:
+  types:
+    convergence_decision:
+      producer: both
+      schema:
+        approach: string
+        visionary_elements: array
+        pragmatist_elements: array
+        tradeoffs_accepted: array
+        both_signed: boolean
+      route_to: shared_workspace
+
+    code_submission:
+      producer: both
+      content_type: file_references
+      route_to: shared_workspace
+
+guardrails:
+  monitors:
+    premature_convergence:
+      description: Agreeing on first approach without genuine exploration
+      metric: exploration_rounds_before_convergence
+      threshold: 2
+      action: inject_divergence_prompt
+
+    endless_exploration:
+      description: Divergence without convergence
+      metric: rounds_in_exploration
+      threshold: 5
+      action: inject_forcing_signal
+
+    airtime_imbalance:
+      description: One agent dominating the co-authoring process
+      metric: turn_word_count_ratio
+      threshold: 2.5
+      action: inject_balance_prompt
+
+  behavioral_contracts:
+    visionary:
+      - must_accept_forcing_function_in_convergence
+      - must_not_reopen_decided_issues_in_implementation
+    pragmatist:
+      - must_suppress_premature_objections_in_exploration
+      - must_allow_minimum_exploration_rounds
+
+observability:
+  quality_metrics:
+    rounds_to_resolution: true
+    exploration_diversity_score: true
+
+  interaction_quality:
+    convergence_speed: true
+    airtime_balance: true
+    reopen_rate: true

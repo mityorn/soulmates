@@ -1,0 +1,229 @@
+hdl: "0.1.0"
+extends: ../general.harness.yaml
+
+pair:
+  name: parallel-merge
+  archetype: parallel-generation
+
+  agents:
+    agent_a:
+      soul: ./generator_soul.md
+      model: haiku
+      role: symmetric
+      speaks_first: true
+
+    agent_b:
+      soul: ./generator_soul.md
+      model: haiku
+      role: symmetric
+      speaks_first: false
+
+phases:
+  initial: independent_generation
+
+  states:
+    independent_generation:
+      description: Both agents work on the task in complete isolation — filesystem-enforced
+      agent_lead: both
+      max_rounds: 1
+      tools:
+        agent_a: [read, write, edit, search, grep, bash, test, get_current_state, take_action]
+        agent_b: [read, write, edit, search, grep, bash, test, get_current_state, take_action]
+      handoff_mode: isolated
+      phase_signal: generative
+      filesystem_isolation:
+        enabled: true
+        method: separate_worktrees
+      transitions:
+        - to: mutual_evaluation
+          trigger: automatic
+          guard: both_complete
+
+    mutual_evaluation:
+      description: Each agent reads partner's work for the first time and evaluates honestly
+      agent_lead: both
+      max_rounds: 3
+      tools:
+        agent_a: [read, search, grep, conversation, get_current_state, take_action]
+        agent_b: [read, search, grep, conversation, get_current_state, take_action]
+      handoff_mode: full_context
+      phase_signal: evaluative
+      reveal:
+        show_partner_work: true
+        show_partner_reasoning: true
+      transitions:
+        - to: integration
+          trigger: explicit
+          guard: both_agree
+          requires:
+            - evaluation_a
+            - evaluation_b
+        - to: escalation
+          trigger: automatic
+          guard: round_limit
+
+    integration:
+      description: Both agents collaboratively produce the merged output
+      agent_lead: both
+      max_rounds: 4
+      tools:
+        agent_a: [read, write, edit, search, grep, bash, test, conversation, get_current_state, take_action]
+        agent_b: [read, write, edit, search, grep, bash, test, conversation, get_current_state, take_action]
+      handoff_mode: full_context
+      phase_signal: generative
+      transitions:
+        - to: complete
+          trigger: explicit
+          guard: both_agree
+          requires:
+            - integration_manifest
+        - to: escalation
+          trigger: automatic
+          guard: round_limit
+
+    escalation:
+      description: Human intervention needed
+      agent_lead: none
+      action: pause_for_human
+
+    complete:
+      description: Merged output produced
+      terminal: true
+
+turns:
+  default_protocol: parallel
+
+  protocols:
+    parallel:
+      isolation: true
+      sync_point: both_complete
+      actions:
+        both: [generate, document_reasoning, document_assumptions]
+
+  phase_overrides:
+    independent_generation:
+      protocol: parallel
+    mutual_evaluation:
+      protocol: alternating
+    integration:
+      protocol: alternating
+
+artifacts:
+  types:
+    generation_output:
+      producer: both
+      schema:
+        approach: string
+        reasoning: string
+        assumptions: array
+        alternatives_considered: array
+        output: file_references
+      route_to: own_workspace
+
+    evaluation:
+      producer: both
+      schema:
+        partner_strengths:
+          type: array
+          min_items: 2
+          items:
+            element: string
+            why_better: string
+        own_strengths:
+          type: array
+          min_items: 2
+          items:
+            element: string
+            why_better: string
+        integration_proposals:
+          type: array
+          min_items: 1
+          items:
+            from_partner: string
+            from_self: string
+            how_to_combine: string
+      route_to: [partner, shared_workspace]
+
+    integration_manifest:
+      producer: both
+      schema:
+        elements_from_a:
+          type: array
+          items:
+            element: string
+            reason_for_adoption: string
+        elements_from_b:
+          type: array
+          items:
+            element: string
+            reason_for_adoption: string
+        novel_synthesis:
+          type: array
+          items:
+            element: string
+            how_it_combines_both: string
+        adoption_balance: float
+      route_to: shared_workspace
+
+  workspace:
+    type: filesystem
+    path: ./workspace
+    per_agent_dirs: true
+    agent_dirs:
+      agent_a: ./workspace/agent_a
+      agent_b: ./workspace/agent_b
+    shared_dir: ./workspace/merged
+
+guardrails:
+  monitors:
+    isolation_integrity:
+      description: Filesystem-level isolation during independent generation
+      metric: cross_workspace_access
+      threshold: 0
+      action: terminate_and_alert
+
+    evaluation_bias:
+      description: Agent systematically preferring own work over partner's
+      metric: self_preference_rate
+      expected_range: [0.30, 0.70]
+      action: inject_fairness_prompt
+
+    averaging_instead_of_integrating:
+      description: Merge taking middle ground rather than best elements
+      metric: integration_novelty_score
+      threshold: 0.20
+      action: inject_specificity_prompt
+
+    completion_asymmetry:
+      description: One agent finishing much before the other
+      metric: completion_time_ratio
+      threshold: 3.0
+      action: log_and_alert
+
+    integration_balance:
+      description: One agent's work being discarded entirely in the merge
+      metric: adoption_balance
+      expected_range: [0.25, 0.75]
+      action: inject_balance_prompt
+
+  behavioral_contracts:
+    both:
+      - must_document_reasoning_during_generation
+      - must_document_assumptions_during_generation
+      - must_identify_partner_strengths_in_evaluation
+      - must_identify_own_strengths_in_evaluation
+      - must_propose_specific_integration_points
+      - must_not_discard_partner_work_entirely
+
+observability:
+  quality_metrics:
+    rounds_to_resolution: true
+    integration_adoption_balance: true
+    generation_diversity_score: true
+
+  interaction_quality:
+    evaluation_fairness: true
+    integration_novelty: true
+
+  drift_signals:
+    approach_similarity_at_generation: true
